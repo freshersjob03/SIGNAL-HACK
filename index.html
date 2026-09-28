@@ -910,7 +910,7 @@ function buildQuiz(c) {
 setChallenge(JSON.parse(JSON.stringify(DEFAULT_CFG)));
 
 /* ---------- participant registration and score storage ---------- */
-const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxuihaLKTw8YQXpaYv1KDdO7unVUVnIKHdNYyCTsdjGXt-MUSjwnskJM7MLvoG7n5gU/exec';
+const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwrepmaclfpRGgcCKhzUPkt7cEorG9hu2eryITwV2B5A22LKhSmwUXWD_Zzum_9giem/exec';
 async function postToSheets(action, data) {
   const payload = new URLSearchParams({ action, payload: JSON.stringify(data) });
   await fetch(GOOGLE_SHEETS_URL, { method: 'POST', mode: 'no-cors', body: payload });
