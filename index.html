@@ -539,107 +539,6 @@ input[type=range]::-moz-range-thumb{background:linear-gradient(135deg,#35E6FF,#8
 <div id="modalRoot"></div>
 <div id="errBar" hidden style="position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--bad);color:#fff;padding:10px 14px;font:500 12px/1.4 var(--f-mono)"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-/* ===== Supabase integration =====
-   Replace these two placeholders with your Supabase Project URL and anon/publishable key.
-   Never put the service_role/secret key in this HTML file.
-*/
-const SUPABASE_URL = 'https://wcmadqlgkbpgerhijghi.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_GwI5MZVjM0drhbI8NtAuhw_xqErWyzH';
-const SUPABASE_ENABLED =
-  SUPABASE_URL.startsWith('https://') &&
-  !SUPABASE_URL.includes('YOUR_PROJECT_REF') &&
-  !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_OR_PUBLISHABLE_KEY');
-
-const supabaseClient = SUPABASE_ENABLED
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
-
-let SUPABASE_PARTICIPANT_ID = null;
-let SUPABASE_SAVE_PROMISE = Promise.resolve();
-
-function supabaseQueue(task) {
-  SUPABASE_SAVE_PROMISE = SUPABASE_SAVE_PROMISE
-    .then(() => task())
-    .catch(err => console.warn('[Supabase]', err));
-  return SUPABASE_SAVE_PROMISE;
-}
-
-async function saveParticipantToSupabase() {
-  if (!supabaseClient || !S.name || !S.email || !S.phone) return;
-
-  const payload = {
-    name: S.name,
-    email: S.email,
-    phone: S.phone,
-    challenge_code: S.code || null,
-    challenge_id: CFG?.id || null,
-    challenge_level: CFG?.level ?? null,
-    started_at: S.startedAt ? new Date(S.startedAt).toISOString() : null,
-    finished_at: S.finishedAt ? new Date(S.finishedAt).toISOString() : null,
-    finished: !!S.finished,
-    quiz_correct: Array.isArray(S.answers)
-      ? S.answers.filter(a => a && a.correct).length
-      : 0,
-    quiz_total: 10,
-    submission_count: Array.isArray(S.subs) ? S.subs.length : 0,
-    best_score: S.subs?.length
-      ? Math.max(...S.subs.map(x => Number(x.final) || 0))
-      : null,
-    last_result_code: $('rCode')?.textContent || null,
-    state_json: {
-      stage: S.stage,
-      process_count: S.processCount || 0
-    }
-  };
-
-  const { data, error } = await supabaseClient
-    .from('signal_hack_participants')
-    .upsert(payload, { onConflict: 'email,challenge_id' })
-    .select('id')
-    .single();
-
-  if (error) throw error;
-  SUPABASE_PARTICIPANT_ID = data?.id || SUPABASE_PARTICIPANT_ID;
-}
-
-function queueParticipantSave() {
-  if (!SUPABASE_ENABLED) return;
-  return supabaseQueue(saveParticipantToSupabase);
-}
-
-async function saveSubmissionToSupabase(submission) {
-  if (!supabaseClient || !SUPABASE_PARTICIPANT_ID || !submission) return;
-
-  const { error } = await supabaseClient
-    .from('signal_hack_submissions')
-    .insert({
-      participant_id: SUPABASE_PARTICIPANT_ID,
-      submission_no: submission.n,
-      final_score: submission.final,
-      parameter_score: submission.pr,
-      signal_message_score: submission.sm,
-      signal_recovery_score: submission.sigRec,
-      message_recovery_score: submission.text,
-      waveform_score: submission.sig?.wave ?? null,
-      spectral_score: submission.sig?.spectral ?? null,
-      mfcc_score: submission.sig?.mfcc ?? null,
-      transcript: submission.transcript || null,
-      settings_json: submission.settings || {},
-      parameter_scores_json: submission.par || {},
-      run_count: submission.runs || 0,
-      submitted_at: new Date(submission.at || Date.now()).toISOString()
-    });
-
-  if (error) throw error;
-}
-
-function queueSubmissionSave(submission) {
-  if (!SUPABASE_ENABLED || !SUPABASE_PARTICIPANT_ID) return;
-  return supabaseQueue(() => saveSubmissionToSupabase(submission));
-}
-</script>
 <script>
 /* ===== Signal Hack DSP core (shared by generator, lab and scoring) ===== */
 const DSP = (() => {
@@ -672,7 +571,7 @@ const DSP = (() => {
   // ---- Frequency shift (single-sideband, via analytic signal). Moves every component by `hz`.
   function freqShift(x, sr, hz) {
     if (!hz) return Float32Array.from(x);
-    const N = nextPow2(x.length * 2), re = new Float64Array(N), im = new Float64Array(N);
+    const N = nextPow2(x.length), re = new Float64Array(N), im = new Float64Array(N);
     re.set(x); fft(re, im, false);
     for (let k = 1; k < N / 2; k++) { re[k] *= 2; im[k] *= 2; }
     for (let k = N / 2 + 1; k < N; k++) { re[k] = 0; im[k] = 0; }
@@ -1010,6 +909,13 @@ function buildQuiz(c) {
 }
 setChallenge(JSON.parse(JSON.stringify(DEFAULT_CFG)));
 
+/* ---------- participant registration and score storage ---------- */
+const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxuihaLKTw8YQXpaYv1KDdO7unVUVnIKHdNYyCTsdjGXt-MUSjwnskJM7MLvoG7n5gU/exec';
+async function postToSheets(action, data) {
+  const payload = new URLSearchParams({ action, payload: JSON.stringify(data) });
+  await fetch(GOOGLE_SHEETS_URL, { method: 'POST', mode: 'no-cors', body: payload });
+}
+
 /* ---------- state ---------- */
 const STORE = 'sdc-v3';
 const freshSettings = () => ({ order: CFG.level >= 5 ? ORDERS[0] : CFG.order, freq: 0, amp: 0, compOn: false, comp: 1, cuts: [] });
@@ -1070,19 +976,30 @@ function renderBrief() {
   $('briefLede').textContent = `${ops.length} hidden operation${ops.length > 1 ? 's were' : ' was'} applied to a spoken sentence — one of them splices noise straight into the recording. Answer ten riddles for clues, undo the damage in the signal lab, then write down the sentence you recover.`;
   $('briefChain').innerHTML = ['<span class="blk">Original speech</span>'].concat(ops.map(o => `<span class="arr">→</span><span class="blk hid">${OPNAME[o]} ?</span>`)).join('') + '<span class="arr">→</span><span class="blk">Challenge audio</span>' + (CFG.level >= 5 ? '<span class="blk hid" style="margin-left:8px">order hidden</span>' : '');
 }
-function register() {
+async function register() {
   const name = $('pname').value.trim(), mail = $('pmail').value.trim(), phone = $('pphone').value.trim();
   const err = m => { $('entryErr').hidden = false; $('entryErr').textContent = m; };
   if (name.length < 2) return err('Enter your name.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(mail)) return err('That email address does not look right.');
   if (phone.replace(/\D/g, '').length < 10) return err('Enter a phone number with at least 10 digits.');
+  if (!GOOGLE_SHEETS_URL) return err('Registration storage is not configured. Add your deployed Google Apps Script URL to GOOGLE_SHEETS_URL in the page source.');
   const codeRaw = $('teamCode').value.trim();
   if (codeRaw) {
     if (codeRaw.length < 40) return err('That looks like the challenge name, not a challenge code. A code is a long block of letters and numbers — leave this box empty unless the organisers gave you one.');
     try { setChallenge(decodeCfg(codeRaw)); S.code = codeRaw; } catch (x) { return err('That challenge code could not be read. Check it with the organisers, or leave the box empty.'); }
   }
-  $('entryErr').hidden = true;
-  S.name = name; S.email = mail; S.phone = phone; S.startedAt = Date.now(); S.settings = freshSettings(); save(); queueParticipantSave(); go('quiz');
+  const btn = $('startBtn');
+  btn.disabled = true; btn.textContent = 'Saving registration…'; $('entryErr').hidden = true;
+  try {
+    await postToSheets('register', {
+      name, email: mail, phone, challenge: CFG.id || 'SIG001', level: CFG.level,
+      registeredAt: new Date().toISOString()
+    });
+    S.name = name; S.email = mail; S.phone = phone; S.startedAt = Date.now(); S.settings = freshSettings(); save(); go('quiz');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Start the clock';
+    err('Could not send your registration. Check your internet connection and try again.');
+  }
 }
 $('startBtn').onclick = register;
 ['pname', 'pmail', 'pphone', 'teamCode'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); register(); } }));
@@ -1408,20 +1325,39 @@ $('submitBtn').onclick = () => {
   const left = MAX_SUBS - S.subs.length;
   modal('Submit for scoring?', `This uses submission ${S.subs.length + 1} of ${MAX_SUBS}. Your processed signal and sentence are compared against the original. ${left - 1} will remain.`, 'Submit', () => {
     $('submitBtn').disabled = true; $('submitBtn').textContent = 'Scoring…';
-    setTimeout(() => {
+    setTimeout(async () => {
       const submission = score();
       S.subs.push(submission);
       if (S.subs.length >= MAX_SUBS) finish();
-      S.viewSub = S.subs.length - 1;
-      save();
-      queueSubmissionSave(submission);
-      queueParticipantSave();
-      $('submitBtn').textContent = 'Submit for scoring';
-      go('result');
+      S.viewSub = S.subs.length - 1; save();
+      try {
+        await postToSheets('score', {
+          name: S.name, email: S.email, phone: S.phone,
+          challenge: CFG.id || 'SIG001', level: CFG.level,
+          registeredAt: new Date(S.startedAt).toISOString(),
+          submission: submission.n,
+          submittedAt: new Date(submission.at).toISOString(),
+          finalPercent: +(submission.final * 100).toFixed(2),
+          signalMessagePercent: +(submission.sm * 100).toFixed(2),
+          parameterPercent: +(submission.pr * 100).toFixed(2),
+          signalRecoveryPercent: +(submission.sigRec * 100).toFixed(2),
+          waveformPercent: +(submission.sig.wave * 100).toFixed(2),
+          spectralPercent: +(submission.sig.spectral * 100).toFixed(2),
+          mfccPercent: +(submission.sig.mfcc * 100).toFixed(2),
+          transcriptPercent: +(submission.text * 100).toFixed(2),
+          transcript: submission.transcript,
+          settings: submission.settings,
+          parameterScores: submission.par,
+          runs: submission.runs
+        });
+      } catch (e) {
+        toast('Score is shown here, but could not be sent to the Sheet. Check the connection and tell the organisers.');
+      }
+      $('submitBtn').textContent = 'Submit for scoring'; go('result');
     }, 30);
   });
 };
-function finish() { S.finished = true; S.finishedAt = Date.now(); save(); queueParticipantSave(); $('srcOrig').textContent = 'Original'; }
+function finish() { S.finished = true; S.finishedAt = Date.now(); save(); $('srcOrig').textContent = 'Original'; }
 function best() { return S.subs.reduce((b, s) => !b || s.final > b.final ? s : b, null); }
 function row(label, v, sub) { return `<div class="row"><span>${label}${sub ? `<span class="sub">${sub}</span>` : ''}</span><span class="meter"><i style="width:${(v * 100).toFixed(1)}%"></i></span><span class="pct">${pct(v)}</span></div>`; }
 function renderResult() {
@@ -1453,7 +1389,7 @@ function renderResult() {
   $('rTime').textContent = `${Math.floor(secs / 60)}m ${secs % 60}s`;
   const quizOk = S.answers.filter(a => a && a.correct).length;
   const code = { challenge: CFG.id, level: CFG.level, name: S.name, email: S.email, phone: S.phone, quiz: quizOk + '/10', best: +(b.final * 100).toFixed(2), subs: S.subs.map(s => ({ n: s.n, final: +(s.final * 100).toFixed(2), pr: +(s.pr * 100).toFixed(2), sm: +(s.sm * 100).toFixed(2), at: new Date(s.at).toISOString(), settings: s.settings, transcript: s.transcript })), runs: S.processCount, started: new Date(S.startedAt).toISOString(), finished: S.finished };
-  $('rCode').textContent = btoa(unescape(encodeURIComponent(JSON.stringify(code)))); queueParticipantSave();
+  $('rCode').textContent = btoa(unescape(encodeURIComponent(JSON.stringify(code))));
   const acts = [];
   if (!S.finished) acts.push(`<button class="btn primary" id="aBack">Back to the lab (${MAX_SUBS - S.subs.length} left)</button>`, `<button class="btn" id="aFinish">Finish &amp; reveal original</button>`);
   else acts.push(`<button class="btn primary" id="aLab">Open the lab — original unlocked</button>`);
